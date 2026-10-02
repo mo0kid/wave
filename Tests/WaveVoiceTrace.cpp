@@ -1,11 +1,12 @@
 // Runs the real WDV.SYS in VoiceFirmwareRuntime from a command script and prints
-// the logged ASIC/CV write stream ("W <cycle> <addr> <byte>"). The oracle gate
-// gate_e_wdv_note_trace.py (Waldorf Wave firmware repo) runs the same script on
-// the Musashi oracle and diffs the two streams.
+// the logged ASIC/CV/routing-latch write stream ("W <cycle> <addr> <byte>").
+// The oracle gate gate_e_wdv_note_trace.py (Waldorf Wave firmware repo) runs the
+// same script on the Musashi oracle and diffs the two streams.
 //
 // Script commands: poke <hexaddr> <hexbyte> (shared RAM 0x100000..0x1fffff),
 // until_pc <hexpc> (single-step), scan (wait for one full voice scan),
-// run <cycles>, mark <name>.
+// run <cycles>, mark <name>. An optional third argument selects the board
+// (0-2, default 0; the board's alive flag is 0x10508e + board).
 #include "Firmware/VoiceFirmwareRuntime.h"
 
 #include <cstdio>
@@ -18,7 +19,7 @@ using namespace wave::firmware;
 
 namespace
 {
-constexpr uint32_t loopAliveFlag = 0x10508e; // st.b after every 0x79c call, board 0
+constexpr uint32_t loopAliveFlag = 0x10508e; // st.b after every 0x79c call, + board id
 constexpr int scanSliceCycles = 200;
 constexpr long stepLimit = 50'000'000;
 
@@ -36,11 +37,12 @@ uint8_t* sharedAt(SharedFirmwareMemory& memory, uint32_t address)
 
 int main(int argc, char** argv)
 {
-    if (argc != 3)
+    if (argc != 3 && argc != 4)
     {
-        std::fprintf(stderr, "usage: WaveVoiceTrace wdv.sys script\n");
+        std::fprintf(stderr, "usage: WaveVoiceTrace wdv.sys script [board]\n");
         return 2;
     }
+    const auto board = argc == 4 ? std::atoi(argv[3]) : 0;
     juce::MemoryBlock image;
     if (!juce::File(argv[1]).loadFileAsData(image))
     {
@@ -52,6 +54,11 @@ int main(int argc, char** argv)
     memory.clear();
     VoiceFirmwareRuntime runtime;
     runtime.attachSharedMemory(memory);
+    if (!runtime.setBoardIndex(board))
+    {
+        std::fprintf(stderr, "board %d is not a valid strap slot\n", board);
+        return 2;
+    }
     if (!runtime.loadAndReset(image))
     {
         std::fprintf(stderr, "WDV image rejected\n");
@@ -101,9 +108,10 @@ int main(int argc, char** argv)
         }
         else if (command == "scan")
         {
-            *sharedAt(memory, loopAliveFlag) = 0;
+            const auto alive = loopAliveFlag + static_cast<uint32_t>(board);
+            *sharedAt(memory, alive) = 0;
             long slices = 0;
-            while (runtime.sharedByte(loopAliveFlag - 0x100000) == 0)
+            while (runtime.sharedByte(alive - 0x100000) == 0)
             {
                 runtime.runCycles(scanSliceCycles);
                 if (++slices > stepLimit)

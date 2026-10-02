@@ -91,7 +91,7 @@ Key facts:
 | 0x800001 | board control/status byte (bit 1 bus claim, bit 3 wave-RAM write, slot strap in bits 0-2 on read) |
 | 0x880000 | CV DAC data latch (12-bit values) |
 | 0x8A0000 + 16*voice + channel | sample-and-hold strobe |
-| 0x8C0000 | output routing latch |
+| 0x8C0000 | output routing latch (write-only; 64-bit image of one cold bit per voice, from part byte +0xC "Audio Out", plus four "Analog in" bits for voices 0-3; the emulator logs the writes) |
 | 0x980000 / 0x980100 | ASIC A (voices 0-7) / ASIC B (voices 8-15) |
 
 ## 3. The master-to-voice-board protocol
@@ -133,9 +133,14 @@ Behaviours that the real ROM exhibits under the 68000 core and that the gates no
 ## 7. What is still open
 
 - **The reported OS 1.700 voice-allocation bug** (missing notes, fixed in 1.8x) is **not localised.** The voice-board image is identical to 1.680, so the cause is on the master. Candidate areas are the note-on allocation code (0x26C4-0x3162) and the key scheduler (0x35B8). This needs a diff of the 1.680 and 1.700 `w2sys.bin` plus oracle runs with the same polyphonic MIDI sequence.
-- **ASIC semantics:** the roles of the ASIC registers (0x980000 + 0/2/4/6/0xE, and 0x12), the CV channel meanings (cutoff, resonance and pan are guesses), the routing latch bits, and how the key-on wave-number write selects a bank.
+- **ASIC semantics:** the *write patterns* are decoded (`spec/firmware-map.md` §4): reg 6 carries the 6-bit wave position every scan, reg 4 three bits each of Wave 1/Wave 2/Noise volume, reg 0xE commits with bit 0 = oscillator, bits 1-3 = voice, bit 4 = parameters/phase load and bits 5-7 = wave RAM bank (one of 8 resident wavetables), and the once-per-key-on write through regs 2/0/4 is the 7-bit **start phase** ("Startphase", 0 = free start, nothing written), not a wave number. What the chips do with them, the CV channel meanings (cutoff, resonance and pan are guesses) and the physical meaning of the routing bits (main / sub 1 / sub 2 by UI label only) need hardware.
 - **Hardware details:** VIA port bits beyond those listed, the panel boot-switch bits, LED strobe rows (7 vs 8), the physical meaning of the analogue channels.
-- **Maximum board count:** the strap allows 3, diagnostics accept up to 4, and some tables hold 64 entries.
+- **Maximum board count: resolved, 3.** The presence mask and the WDV slot strap are 3 bits wide; the "up to 4" and 64-entry tables are sizing slack (`spec/firmware-map.md` §7.2). `gate_e` runs boards 0, 1 and 2.
+- **Emulator assumptions that disagree with the map (found 2026-10-02, not yet changed, hardware-unvalidated):**
+  1. *Audio Out byte.* The firmware's instrument page 1 table (0x14BCA = `04 05 07 0C 09 0A 02 03`) puts "Audio Out" at part byte **+0xC**, and WDV 0xBC6 routes from that byte; the plugin reads and edits **+8** (`PluginProcessor.cpp` `pageOneRecordOffsets`, `byte(8)`), a byte nothing consumes and which is 0 in every factory set. +0xC is 1 in every factory set (enum labels at 0x29D24: Aux only / main / sub 1 / sub 2), so the plugin's `audioOutput == 0` test is right only by accident. A fix has to read +0xC and map 1 -> main; sets with +0xC = 0 (three parts in `pg.set`/`ultimate.set`) would then leave the main mix.
+  2. *Start modulation.* The firmware adds the route in sound bytes 28/29 (44/45) to **Startphase** (byte 27/43, written once at key-on, 0 = free start) and clamps it to 1-127; `WaldorfEngine` applies `wave1StartMod`/`wave2StartMod` as a wave-position offset sampled at note-on instead. The engine's Startphase itself (`wavePhases`, 0 = free start) matches the write pattern.
+  3. *Level resolution.* reg 4 carries only 3 bits per level (value 0-0x70 >> 4); the engine mixes 7-bit level codes (0-112) from the ES2 description. Whether the chip has another level path is open.
+  Single wavetable per voice (one bank slot for both oscillators), 64 waves of 64 stored samples per table, 8 resident tables per board and 128 table ids (64 factory + 64 user) all match `WavetableBank` and `WaldorfEngine`; the mirrored second half of each wave is an inference that no write shows.
 - **Static only:** the UI pages, the Wave Editor, the LFO, env3/env4 and glide stages on the board, and anything timing-dependent.
 
 ## 8. What this means for sample-accurate emulation
@@ -146,7 +151,7 @@ Practical next steps:
 
 - [ ] Check the emulator's constants and behaviours against `spec/firmware-map.md` §3-§5 (starting with the waveform-RAM address).
 - [ ] Diff OS 1.668, 1.671, 1.680 and 1.700 `w2sys.bin` and localise the voice-allocation change.
-- [x] Capture ASIC/CV write traces for one note from the oracle and compare them with the emulator's (2026-10-02, `oracle/gate_e_wdv_note_trace.py` + `Tests/WaveVoiceTrace.cpp`). The same script (boot, seeded voice records, an idle scan, key-on of voices 3 and 9, three more scans) runs on the Musashi oracle and on `VoiceFirmwareRuntime`; all 11,146 logged writes (CV latch, CV strobes, ASIC, incl. tick-IRQ acknowledges) match in order, value and cycle stamp. Both sides use the same 68000 core, so this checks the emulator's bus decode, shared RAM and IRQ plumbing, not the ROM. Findings: `WaldorfAsic.cpp` never sees these writes (it is a behavioural proxy driven by the engine); `WaldorfEngine::applyFirmwareHardwareWrite` only shadows the bytes and nothing reads the shadow yet; the emulator does not log or decode the routing latch (0x8C0000, 128 byte-writes per scan) or the board-control latch (0x800001).
+- [x] Capture ASIC/CV write traces for one note from the oracle and compare them with the emulator's (2026-10-02, `oracle/gate_e_wdv_note_trace.py` + `Tests/WaveVoiceTrace.cpp`). The same script (boot, seeded voice records, an idle scan, key-on of voices 3 and 9, three more scans) runs on the Musashi oracle and on `VoiceFirmwareRuntime`; all 11,146 logged writes (CV latch, CV strobes, ASIC, incl. tick-IRQ acknowledges) match in order, value and cycle stamp. Both sides use the same 68000 core, so this checks the emulator's bus decode, shared RAM and IRQ plumbing, not the ROM. Findings: `WaldorfAsic.cpp` never sees these writes (it is a behavioural proxy driven by the engine); `WaldorfEngine::applyFirmwareHardwareWrite` only shadows the bytes and nothing reads the shadow yet; at that time the emulator did not log the routing latch (0x8C0000, 128 byte-writes per scan) or the board-control latch (0x800001). Since then the routing latch is logged and diffed too, and the gate runs on all three boards (35,004 checks, 0 failures).
 - [ ] Plan the hardware captures (bus, ASIC select, DAC timing, calibrated audio) needed to pin the ASIC and analogue model.
 
 ## 9. Legal and practical caveats

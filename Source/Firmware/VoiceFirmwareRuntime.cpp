@@ -226,30 +226,29 @@ void VoiceFirmwareRuntime::write8(uint32_t address, uint8_t value) noexcept
     if (address >= asicBase && address < asicBase + asicRegisters.size())
     {
         asicRegisters[address - asicBase] = value;
-        if (hardwareWrites.size() < 65536)
-            hardwareWrites.push_back(
-                { emulatedCycles
-                      + static_cast<uint64_t>(juce::jmax(0, cpu.currentExecutionCycleOffset())),
-                  address, value });
+        queueHardwareWrite(address, value);
     }
     if (address >= cvBankABase && address < cvBankABase + cvWindowSize)
     {
         cvRegisters[0][address - cvBankABase] = value;
-        if (hardwareWrites.size() < 65536)
-            hardwareWrites.push_back(
-                { emulatedCycles
-                      + static_cast<uint64_t>(juce::jmax(0, cpu.currentExecutionCycleOffset())),
-                  address, value });
+        queueHardwareWrite(address, value);
     }
     if (address >= cvBankBBase && address < cvBankBBase + cvWindowSize)
     {
         cvRegisters[1][address - cvBankBBase] = value;
-        if (hardwareWrites.size() < 65536)
-            hardwareWrites.push_back(
-                { emulatedCycles
-                      + static_cast<uint64_t>(juce::jmax(0, cpu.currentExecutionCycleOffset())),
-                  address, value });
+        queueHardwareWrite(address, value);
     }
+    if (address >= routingLatchBase && address < routingLatchBase + routingLatchWindowSize)
+        queueHardwareWrite(address, value);
+}
+
+void VoiceFirmwareRuntime::queueHardwareWrite(uint32_t address, uint8_t value) noexcept
+{
+    if (hardwareWrites.size() < 65536)
+        hardwareWrites.push_back(
+            { emulatedCycles
+                  + static_cast<uint64_t>(juce::jmax(0, cpu.currentExecutionCycleOffset())),
+              address, value });
 }
 
 uint32_t VoiceFirmwareRuntime::bigEndian32(const uint8_t* bytes) noexcept

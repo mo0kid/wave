@@ -70,6 +70,10 @@ public:
     static constexpr uint32_t cvBankBBase = 0x8a0000;
     static constexpr uint32_t cvWindowSize = 0x10000;
     static constexpr uint32_t boardControlAddress = 0x800001;
+    // Write-only output routing latch: WDV 0xCBA writes 8 bytes (4 words)
+    // here per voice. Queued with the ASIC/CV writes; the engine ignores it.
+    static constexpr uint32_t routingLatchBase = 0x8c0000;
+    static constexpr uint32_t routingLatchWindowSize = 0x10000;
     // Firmware-visible black-box register window. The name describes the
     // physical target only; register storage does not model chip internals.
     static constexpr uint32_t asicBase = 0x980000;
@@ -79,6 +83,7 @@ public:
 private:
     [[nodiscard]] uint8_t read8(uint32_t address) noexcept override;
     void write8(uint32_t address, uint8_t value) noexcept override;
+    void queueHardwareWrite(uint32_t address, uint8_t value) noexcept;
     [[nodiscard]] static uint32_t bigEndian32(const uint8_t* bytes) noexcept;
 
     M68000 cpu;
