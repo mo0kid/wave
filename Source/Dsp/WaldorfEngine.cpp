@@ -1089,10 +1089,15 @@ Cem3387::StereoSample WaldorfEngine::Voice::process(
     }
 
     reconstruction.setAge(parameters.circuitAgeAmount);
-    const auto levelCode1 = static_cast<uint8_t>(juce::jlimit(
+    auto levelCode1 = static_cast<uint8_t>(juce::jlimit(
         0, 127, juce::roundToInt(controlWaveLevels[0] * 112.0f)));
-    const auto levelCode2 = static_cast<uint8_t>(juce::jlimit(
+    auto levelCode2 = static_cast<uint8_t>(juce::jlimit(
         0, 127, juce::roundToInt(controlWaveLevels[1] * 112.0f)));
+    if (quantiseWaveLevels)
+    {
+        levelCode1 = AsicOutputMixer::levelFromRegisterBits(levelCode1);
+        levelCode2 = AsicOutputMixer::levelFromRegisterBits(levelCode2);
+    }
     asicClockPhase += OscillatorChipProxy::modelClockRate() / sampleRate;
     while (asicClockPhase >= 1.0)
     {

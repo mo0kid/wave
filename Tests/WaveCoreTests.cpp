@@ -319,6 +319,13 @@ void testAsicClockMixOverflowAndVcfSaturation()
     require(Mixer::mixOscillatorCodes(-128, -128, 64, 65) == 127,
             "Negative ES2 numerical overflow clips instead of wrapping positive");
 
+    // Firmware sends levels as ws>>4 (3 bits): the opt-in model keeps only those.
+    require(Mixer::levelFromRegisterBits(0x70) == 0x70
+                && Mixer::levelFromRegisterBits(127) == 0x70
+                && Mixer::levelFromRegisterBits(0x6f) == 0x60
+                && Mixer::levelFromRegisterBits(0x0f) == 0,
+            "Three-bit ASIC level code no longer keeps only ws bits 4-6");
+
     const auto small = wave::dsp::Cem3387::saturateVcfInput(0.1f);
     const auto knee = wave::dsp::Cem3387::saturateVcfInput(0.7f);
     const auto full = wave::dsp::Cem3387::saturateVcfInput(1.0f);

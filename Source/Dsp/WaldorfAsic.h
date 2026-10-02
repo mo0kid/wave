@@ -119,6 +119,14 @@ public:
                                                    int8_t oscillator2,
                                                    uint8_t level1,
                                                    uint8_t level2) noexcept;
+    // The WDV firmware sends each oscillator level to the ASIC as only three
+    // bits (ws level >> 4, OS 1.700 WDV 0x9B8/0xA58). Scaling that code back to
+    // the 0..0x70 level range is a hypothesis about the ASIC's gain law, not a
+    // documented fact.
+    [[nodiscard]] static uint8_t levelFromRegisterBits(uint8_t level) noexcept
+    {
+        return static_cast<uint8_t>(level & 0x70u);
+    }
     [[nodiscard]] static int8_t quantiseOscillator(float sample) noexcept;
     [[nodiscard]] static float normaliseOutput(int8_t sample) noexcept;
 };

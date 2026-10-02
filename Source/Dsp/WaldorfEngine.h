@@ -147,6 +147,12 @@ public:
     [[nodiscard]] float firstActiveVcaControlValue() const noexcept;
     [[nodiscard]] uint16_t filterCalibrationCode(int voice) const noexcept;
     void setFilterCalibrationCode(int voice, uint16_t code) noexcept;
+    // Not synchronised: call with the callback lock held (or before audio starts).
+    void setQuantiseWaveLevels(bool enabled) noexcept
+    {
+        for (auto& voice : voices)
+            voice.quantiseWaveLevels = enabled;
+    }
     void setVoiceCardThreadingEnabled(bool enabled) noexcept
     {
         voiceCardThreadingEnabled.store(enabled, std::memory_order_relaxed);
@@ -192,6 +198,8 @@ private:
         {
             circuit.setCutoffCalibrationCode(code);
         }
+        // Off by default; see AsicOutputMixer::levelFromRegisterBits.
+        bool quantiseWaveLevels = false;
 
         [[nodiscard]] float sourceValue(int source, float ampEnvelope,
                                         float waveEnvelopeValue,
