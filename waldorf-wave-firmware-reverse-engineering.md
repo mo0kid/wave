@@ -146,7 +146,7 @@ Practical next steps:
 
 - [ ] Check the emulator's constants and behaviours against `spec/firmware-map.md` §3-§5 (starting with the waveform-RAM address).
 - [ ] Diff OS 1.668, 1.671, 1.680 and 1.700 `w2sys.bin` and localise the voice-allocation change.
-- [ ] Capture ASIC/CV write traces for one note from the oracle and compare them with the emulator's.
+- [x] Capture ASIC/CV write traces for one note from the oracle and compare them with the emulator's (2026-10-02, `oracle/gate_e_wdv_note_trace.py` + `Tests/WaveVoiceTrace.cpp`). The same script (boot, seeded voice records, an idle scan, key-on of voices 3 and 9, three more scans) runs on the Musashi oracle and on `VoiceFirmwareRuntime`; all 11,146 logged writes (CV latch, CV strobes, ASIC, incl. tick-IRQ acknowledges) match in order, value and cycle stamp. Both sides use the same 68000 core, so this checks the emulator's bus decode, shared RAM and IRQ plumbing, not the ROM. Findings: `WaldorfAsic.cpp` never sees these writes (it is a behavioural proxy driven by the engine); `WaldorfEngine::applyFirmwareHardwareWrite` only shadows the bytes and nothing reads the shadow yet; the emulator does not log or decode the routing latch (0x8C0000, 128 byte-writes per scan) or the board-control latch (0x800001).
 - [ ] Plan the hardware captures (bus, ASIC select, DAC timing, calibrated audio) needed to pin the ASIC and analogue model.
 
 ## 9. Legal and practical caveats
