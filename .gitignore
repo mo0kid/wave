@@ -33,3 +33,11 @@
 *.provisionprofile
 *.keychain
 *.keychain-db
+
+# Local Waldorf Wave resources
+/Sounds/
+/System/
+/Tools/
+/Sounds.zip
+/System.zip
+/Tools.zip
