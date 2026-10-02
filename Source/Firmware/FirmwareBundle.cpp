@@ -17,9 +17,11 @@ Bundle::Report Bundle::load(const juce::File& directoryOrImage)
 {
     clear();
 
-    const auto root = directoryOrImage.isDirectory()
-                          ? directoryOrImage
-                          : directoryOrImage.getParentDirectory();
+    // A missing path must not fall back to its parent: the recursive image
+    // search below would then walk e.g. the whole filesystem for "/nonexistent".
+    const auto root = directoryOrImage.existsAsFile()
+                          ? directoryOrImage.getParentDirectory()
+                          : directoryOrImage;
     const auto masterFile = findImage(root, "w2sys.bin");
     const auto voiceFile = findImage(root, "wdv.sys");
 

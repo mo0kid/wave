@@ -2238,6 +2238,15 @@ void testReferenceComparison()
               << " peak=" << metrics.peakError << '\n';
 }
 
+void testFirmwareBundleRejectsMissingPath()
+{
+    // Used to search the parent ("/") recursively and effectively never return.
+    wave::firmware::Bundle bundle;
+    const auto report = bundle.load(juce::File("/nonexistent-wave-firmware-dir"));
+    require(report.authenticity != wave::firmware::Bundle::Authenticity::verifiedOs1700,
+            "Missing firmware path was accepted");
+}
+
 void testOfficialFirmwareWhenAvailable()
 {
     const auto* path = std::getenv("WAVE_FIRMWARE_DIR");
@@ -2860,6 +2869,7 @@ int main()
         testCompletePanelWiringContract();
         testDecodedVoiceBoardProtocol();
         testVoiceBoardWaveRamDecode();
+        testFirmwareBundleRejectsMissingPath();
         testOfficialFirmwareWhenAvailable();
         std::cout << "WaveCoreTests: all checks passed\n";
         return 0;
