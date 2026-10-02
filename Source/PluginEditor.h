@@ -6,6 +6,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 class WaveEmulationAudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -21,6 +22,8 @@ public:
     [[nodiscard]] juce::String tooltipAt(juce::Point<float> editorPoint) const;
     juce::Result loadPanelSkin(const juce::File& file, bool remember = true);
     void useDefaultPanelSkin();
+    void setTabbedLayout(bool tabbed, bool remember = true);
+    void selectTab(int tab);
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -77,6 +80,13 @@ private:
     void initialisePanelRegions(const juce::XmlElement& svg);
     void synchroniseFaderValues() noexcept;
     void rebuildPanelImage();
+    void layoutComponents();
+    void paintDesign(juce::Graphics&, float scale);
+    [[nodiscard]] float viewScale() const noexcept;
+    [[nodiscard]] juce::Point<float> viewSize() const noexcept;
+    [[nodiscard]] juce::Point<float> viewToDesign(juce::Point<float> viewPoint) const noexcept;
+    [[nodiscard]] std::optional<juce::Rectangle<int>> designToView(
+        juce::Rectangle<float> designBounds) const noexcept;
     bool handlePerformanceControl(juce::Point<float> designPoint);
     void pressPanelButton(int hardwareId);
     void releaseActivePointerInteractions(bool showMidiFeedback);
@@ -156,6 +166,8 @@ private:
     std::array<bool, 13> keyboardNotes{};
     bool computerShiftDown = false;
     bool keyboardVisible = true;
+    bool tabbedLayout = false;
+    int selectedTab = 0;
     bool performanceMode = true;
     int selectedLfo = 0;
     int waveEnvelopePage = 0;

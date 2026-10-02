@@ -201,6 +201,8 @@ public:
     }
     [[nodiscard]] juce::File getRememberedPanelSkin() const;
     juce::Result rememberPanelSkin(const juce::File& file);
+    [[nodiscard]] bool getRememberedTabbedLayout() const;
+    void rememberTabbedLayout(bool tabbed);
     bool setPanelButton(int buttonId, bool pressed) noexcept;
     void setKeyboardControllerButton(uint8_t asciiCode, bool pressed) noexcept;
     [[nodiscard]] int getFirmwareOscillatorOctave(int oscillator) const noexcept;
