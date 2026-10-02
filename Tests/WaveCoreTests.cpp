@@ -2425,6 +2425,40 @@ void testDecodedVoiceBoardProtocol()
             "WDV shared bus mutex was not released");
 }
 
+void testVoiceBoardWaveRamDecode()
+{
+    // Hand-built WDV image (no firmware needed): SP 0x8FFE, reset 0x400, then
+    // byte stores through RAM A, RAM B and the write-both alias, and a spin.
+    static constexpr uint8_t code[] = {
+        0x13, 0xfc, 0x00, 0xa5, 0x00, 0x06, 0x00, 0x01, // move.b #$a5,$060001
+        0x13, 0xfc, 0x00, 0x5a, 0x00, 0x05, 0x00, 0x03, // move.b #$5a,$050003
+        0x13, 0xfc, 0x00, 0x11, 0x00, 0x04, 0x00, 0x05, // move.b #$11,$040005
+        0x60, 0xfe                                       // bra.s *
+    };
+    juce::MemoryBlock image(0x20 + 0x400 + sizeof(code), true);
+    auto* bytes = static_cast<uint8_t*>(image.getData());
+    bytes[0x20 + 2] = 0x8f;
+    bytes[0x20 + 3] = 0xfe;
+    bytes[0x20 + 6] = 0x04;
+    std::copy(std::begin(code), std::end(code), bytes + 0x20 + 0x400);
+
+    wave::firmware::SharedFirmwareMemory memory;
+    memory.clear();
+    wave::firmware::VoiceFirmwareRuntime runtime;
+    runtime.attachSharedMemory(memory);
+    require(runtime.loadAndReset(image), "Synthetic WDV image was rejected");
+    runtime.runCycles(2000);
+    require(runtime.waveRamByte(0, 1) == 0xa5 && runtime.waveRamByte(1, 1) == 0xa5,
+            "Write at $060001 did not reach both wave RAMs");
+    require(runtime.waveRamByte(1, 3) == 0x5a && runtime.waveRamByte(0, 3) == 0,
+            "Write at $050003 did not reach wave RAM B only");
+    require(runtime.waveRamByte(0, 5) == 0x11 && runtime.waveRamByte(1, 5) == 0,
+            "Write at $040005 did not reach wave RAM A only");
+    require(memory.mainRam[0x60001] == 0 && memory.mainRam[0x50003] == 0
+                && memory.mainRam[0x40005] == 0,
+            "Voice-board wave RAM stores leaked into master DRAM");
+}
+
 class Test68000Bus final : public wave::firmware::M68000Bus
 {
 public:
@@ -2825,6 +2859,7 @@ int main()
         testLcdFramebuffer();
         testCompletePanelWiringContract();
         testDecodedVoiceBoardProtocol();
+        testVoiceBoardWaveRamDecode();
         testOfficialFirmwareWhenAvailable();
         std::cout << "WaveCoreTests: all checks passed\n";
         return 0;

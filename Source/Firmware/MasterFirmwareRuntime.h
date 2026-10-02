@@ -166,7 +166,6 @@ public:
     static constexpr uint32_t sharedProgramSize = SharedFirmwareMemory::programSize;
     static constexpr uint32_t sharedWorkBase = 0x140000;
     static constexpr uint32_t sharedWorkSize = SharedFirmwareMemory::workSize;
-    static constexpr uint32_t sharedExtensionBase = 0x180000;
     static constexpr uint32_t lcdVideoBase = 0xa00000;
     static constexpr uint32_t lcdVideoWindowSize = 0x4000;
     using LcdVideoSnapshot = std::array<uint8_t, lcdVideoWindowSize>;

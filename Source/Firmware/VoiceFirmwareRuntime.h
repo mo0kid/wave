@@ -44,6 +44,12 @@ public:
     [[nodiscard]] uint16_t asicWord(uint32_t offset) const noexcept;
     [[nodiscard]] uint16_t cvWord(int bank, uint32_t offset) const noexcept;
     [[nodiscard]] uint8_t sharedByte(uint32_t offset) const noexcept;
+    [[nodiscard]] uint8_t waveRamByte(int ram, uint32_t offset) const noexcept
+    {
+        return (ram == 0 || ram == 1) && offset < waveRamSize
+                   ? waveformRam[static_cast<size_t>(ram)][offset]
+                   : 0xffu;
+    }
     [[nodiscard]] uint64_t emulatedCycleCount() const noexcept { return emulatedCycles; }
     [[nodiscard]] uint64_t controlTickCount() const noexcept { return controlTicks; }
     [[nodiscard]] int getBoardIndex() const noexcept { return boardIndex; }
@@ -53,9 +59,13 @@ public:
     static constexpr uint32_t sharedProgramBase = 0x100000;
     static constexpr uint32_t sharedProgramSize = SharedFirmwareMemory::programSize;
     static constexpr uint32_t sharedWorkBase = 0x140000;
-    static constexpr uint32_t sharedExtensionBase = 0x180000;
-    static constexpr uint32_t waveformRamBase = 0x600000;
-    static constexpr uint32_t waveformRamSize = 0x20000;
+    // Two 64 KB wave RAMs (A, B) with a write-both alias. WDV.SYS stores 8-bit
+    // samples on odd bytes at 0x060001 + (bank << 13); the alias is read back
+    // as RAM A (alias read behaviour is not established by the firmware).
+    static constexpr uint32_t waveRamABase = 0x040000;
+    static constexpr uint32_t waveRamBBase = 0x050000;
+    static constexpr uint32_t waveRamBothBase = 0x060000;
+    static constexpr uint32_t waveRamSize = 0x10000;
     static constexpr uint32_t cvBankABase = 0x880000;
     static constexpr uint32_t cvBankBBase = 0x8a0000;
     static constexpr uint32_t cvWindowSize = 0x10000;
@@ -76,7 +86,7 @@ private:
     SharedFirmwareMemory ownedSharedMemory;
     SharedFirmwareMemory* sharedMemory = &ownedSharedMemory;
     std::array<uint8_t, asicWindowSize> asicRegisters{};
-    std::array<uint8_t, waveformRamSize> waveformRam{};
+    std::array<std::array<uint8_t, waveRamSize>, 2> waveformRam{};
     std::array<std::array<uint8_t, cvWindowSize>, 2> cvRegisters{};
     uint8_t controlLatch = 0;
     int boardIndex = 0;

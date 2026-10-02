@@ -10,7 +10,9 @@ struct SharedFirmwareMemory
     static constexpr uint32_t mainRamSize = 0x100000;
     static constexpr uint32_t programSize = 0x40000;
     static constexpr uint32_t workSize = 0x40000;
-    static constexpr uint32_t extensionSize = 0x80000;
+    // The shared SRAM is 512 KB (0x100000-0x17FFFF = program + work); nothing
+    // is decoded above it, so accesses there count as unmapped.
+    static constexpr uint32_t extensionSize = 0;
 
     void clear() noexcept
     {
