@@ -94,6 +94,9 @@ public:
     juce::Result flushMountedDiskImage();
     juce::Result saveMountedDiskImageAs(const juce::File& destination);
     juce::Result ejectDiskImage();
+    // OS 1.700 voice-allocation fix (MasterFirmwareRuntime::setVoiceAllocationFix); off by default, saved with the plugin state.
+    void setVoiceAllocationFix(bool enabled);
+    [[nodiscard]] bool getVoiceAllocationFix() const;
     void resetToColdStart();
     [[nodiscard]] bool hasMountedDiskImage() const noexcept
     {

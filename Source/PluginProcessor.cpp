@@ -797,6 +797,18 @@ juce::Result WaveEmulationAudioProcessor::saveMountedDiskImageAs(
     return mounted;
 }
 
+void WaveEmulationAudioProcessor::setVoiceAllocationFix(bool enabled)
+{
+    const juce::ScopedLock callbackLock(getCallbackLock());
+    masterFirmware.setVoiceAllocationFix(enabled);
+    parameters.state.setProperty("voiceAllocationFix", enabled, nullptr);
+}
+
+bool WaveEmulationAudioProcessor::getVoiceAllocationFix() const
+{
+    return static_cast<bool>(parameters.state.getProperty("voiceAllocationFix", false));
+}
+
 juce::Result WaveEmulationAudioProcessor::ejectDiskImage()
 {
     const auto result = masterFirmware.ejectDiskImage();
@@ -5038,6 +5050,7 @@ void WaveEmulationAudioProcessor::setStateInformation(const void* data, int size
                       : 0;
             currentProgram.store(restoredProgram, std::memory_order_release);
             performanceFadersTouched.store(0, std::memory_order_release);
+            masterFirmware.setVoiceAllocationFix(getVoiceAllocationFix());   // applied by the loadAndStart below
             const auto savedDirectory = parameters.state.getProperty("firmwareDirectory").toString();
             if (savedDirectory.isNotEmpty())
             {

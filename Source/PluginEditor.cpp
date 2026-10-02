@@ -52,6 +52,7 @@ constexpr auto toggleKeyboardMenuItem = 0x470b;
 constexpr auto loadPanelSkinMenuItem = 0x470c;
 constexpr auto defaultPanelSkinMenuItem = 0x470d;
 constexpr auto tabbedLayoutMenuItem = 0x470e;
+constexpr auto voiceAllocationFixMenuItem = 0x470f;
 
 // The tabbed layout reuses the original artwork and wiring unchanged: each tab
 // is a list of full-SVG rectangles translated into a smaller view. The screen
@@ -818,6 +819,8 @@ juce::PopupMenu WaveEmulationAudioProcessorEditor::getMenuForIndex(
         return menu;
 
     menu.addItem(loadFirmwareMenuItem, "Load System Firmware Folder...");
+    menu.addItem(voiceAllocationFixMenuItem, "OS 1.700 Voice Allocation Fix (no stolen held notes)", true,
+                 ownerProcessor.getVoiceAllocationFix());
     menu.addSeparator();
     const auto mounted = ownerProcessor.hasMountedDiskImage();
     menu.addItem(createBlankDiskMenuItem, "New Blank 720 KB DD Disk Image...");
@@ -901,6 +904,12 @@ void WaveEmulationAudioProcessorEditor::menuItemSelected(int menuItemId, int)
     if (menuItemId == loadFirmwareMenuItem)
     {
         showFirmwareFolderChooser();
+        return;
+    }
+    if (menuItemId == voiceAllocationFixMenuItem)
+    {
+        ownerProcessor.setVoiceAllocationFix(!ownerProcessor.getVoiceAllocationFix());
+        menuItemsChanged();
         return;
     }
     if (menuItemId == createBlankDiskMenuItem)

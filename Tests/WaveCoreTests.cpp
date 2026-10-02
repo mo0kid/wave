@@ -2298,6 +2298,10 @@ void testOfficialFirmwareWhenAvailable()
     require(masterRuntime.completedColdHardwareSetup(),
             "Master firmware did not perform its observed cold-start hardware writes");
 
+    require(masterRuntime.setVoiceAllocationFix(true) && masterRuntime.localByte(0x2ee2u) == 0x60,
+            "Voice allocation fix did not patch find_free_voice");
+    require(!masterRuntime.setVoiceAllocationFix(false) && masterRuntime.localByte(0x2ee2u) == 0x65,
+            "Voice allocation fix was not reverted");
     masterRuntime.runCycles(2000000);
     require(masterRuntime.runOs1700InitialisationFileLoad(),
             "Master OS did not read synthetic INIT.SND and INIT.PFM through its file loader");
