@@ -94,6 +94,9 @@ public:
     juce::Result flushMountedDiskImage();
     juce::Result saveMountedDiskImageAs(const juce::File& destination);
     juce::Result ejectDiskImage();
+    // OS 1.700 voice-allocation fix (MasterFirmwareRuntime::setVoiceAllocationFix); off by default, saved with the plugin state.
+    void setVoiceAllocationFix(bool enabled);
+    [[nodiscard]] bool getVoiceAllocationFix() const;
     void resetToColdStart();
     [[nodiscard]] bool hasMountedDiskImage() const noexcept
     {
@@ -201,6 +204,8 @@ public:
     }
     [[nodiscard]] juce::File getRememberedPanelSkin() const;
     juce::Result rememberPanelSkin(const juce::File& file);
+    [[nodiscard]] bool getRememberedTabbedLayout() const;
+    void rememberTabbedLayout(bool tabbed);
     bool setPanelButton(int buttonId, bool pressed) noexcept;
     void setKeyboardControllerButton(uint8_t asciiCode, bool pressed) noexcept;
     [[nodiscard]] int getFirmwareOscillatorOctave(int oscillator) const noexcept;

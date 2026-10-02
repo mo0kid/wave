@@ -319,6 +319,13 @@ void testAsicClockMixOverflowAndVcfSaturation()
     require(Mixer::mixOscillatorCodes(-128, -128, 64, 65) == 127,
             "Negative ES2 numerical overflow clips instead of wrapping positive");
 
+    // Firmware sends levels as ws>>4 (3 bits): the opt-in model keeps only those.
+    require(Mixer::levelFromRegisterBits(0x70) == 0x70
+                && Mixer::levelFromRegisterBits(127) == 0x70
+                && Mixer::levelFromRegisterBits(0x6f) == 0x60
+                && Mixer::levelFromRegisterBits(0x0f) == 0,
+            "Three-bit ASIC level code no longer keeps only ws bits 4-6");
+
     const auto small = wave::dsp::Cem3387::saturateVcfInput(0.1f);
     const auto knee = wave::dsp::Cem3387::saturateVcfInput(0.7f);
     const auto full = wave::dsp::Cem3387::saturateVcfInput(1.0f);
@@ -1154,6 +1161,35 @@ void testAllVoiceFiltersAreCalibrated()
     }
     require(maximumResponse / minimumResponse < 1.0001,
             "Fixed reconstruction filters retain an undocumented voice spread");
+}
+
+void testWvcInputNetworkResponse()
+{
+    // Expected gains (dB) from scripts/derive_wvc_input_network.py: the WVC
+    // input network of the service manual schematic, p.47.
+    struct Point { double hz; double expectedDb; };
+    for (const auto& point : { Point { 1000.0, 0.26 }, Point { 8000.0, 3.66 },
+                               Point { 20000.0, -1.93 }, Point { 30000.0, -8.05 } })
+    {
+        wave::dsp::ReconstructionStage stage;
+        stage.prepare(250000.0, 0.0f);
+        stage.setAge(0.0f);
+        double energy = 0.0;
+        constexpr auto total = 100000;
+        for (int sample = 0; sample < total; ++sample)
+        {
+            const auto input = 0.1f * std::sin(static_cast<float>(
+                juce::MathConstants<double>::twoPi * point.hz
+                * static_cast<double>(sample) / 250000.0));
+            const auto output = stage.process(input);
+            if (sample >= total / 2)
+                energy += static_cast<double>(output) * output;
+        }
+        const auto gainDb = 20.0 * std::log10(
+            std::sqrt(energy / (total / 2)) / (0.1 / std::sqrt(2.0)));
+        require(std::abs(gainDb - point.expectedDb) < 0.6,
+                "Reconstruction stage departs from the WVC input network schematic");
+    }
 }
 
 void testCemControlVoltageSettling()
@@ -2238,6 +2274,15 @@ void testReferenceComparison()
               << " peak=" << metrics.peakError << '\n';
 }
 
+void testFirmwareBundleRejectsMissingPath()
+{
+    // Used to search the parent ("/") recursively and effectively never return.
+    wave::firmware::Bundle bundle;
+    const auto report = bundle.load(juce::File("/nonexistent-wave-firmware-dir"));
+    require(report.authenticity != wave::firmware::Bundle::Authenticity::verifiedOs1700,
+            "Missing firmware path was accepted");
+}
+
 void testOfficialFirmwareWhenAvailable()
 {
     const auto* path = std::getenv("WAVE_FIRMWARE_DIR");
@@ -2289,6 +2334,10 @@ void testOfficialFirmwareWhenAvailable()
     require(masterRuntime.completedColdHardwareSetup(),
             "Master firmware did not perform its observed cold-start hardware writes");
 
+    require(masterRuntime.setVoiceAllocationFix(true) && masterRuntime.localByte(0x2ee2u) == 0x60,
+            "Voice allocation fix did not patch find_free_voice");
+    require(!masterRuntime.setVoiceAllocationFix(false) && masterRuntime.localByte(0x2ee2u) == 0x65,
+            "Voice allocation fix was not reverted");
     masterRuntime.runCycles(2000000);
     require(masterRuntime.runOs1700InitialisationFileLoad(),
             "Master OS did not read synthetic INIT.SND and INIT.PFM through its file loader");
@@ -2402,6 +2451,10 @@ void testOfficialFirmwareWhenAvailable()
                               < wave::firmware::VoiceFirmwareRuntime::asicBase + 0x200u;
             }),
             "Firmware-driven note did not reach either oscillator-chip register page");
+    require(std::any_of(midiWrites.begin(), midiWrites.end(), [](const auto& write) {
+                return write.address == wave::firmware::VoiceFirmwareRuntime::routingLatchBase;
+            }),
+            "Firmware-driven note did not refresh the output routing latch");
     require(masterRuntime.unmappedReadCount() == 0 && voiceRuntime.unmappedReadCount() == 0,
             "Firmware-driven MIDI note reached an unmodelled system-bus address");
 }
@@ -2423,6 +2476,82 @@ void testDecodedVoiceBoardProtocol()
             "WDV update mask, record stride, or semaphore layout is incorrect");
     require(memory.program[wave::firmware::VoiceBoardProtocol::busMutex] == 0,
             "WDV shared bus mutex was not released");
+}
+
+void testVoiceBoardWaveRamDecode()
+{
+    // Hand-built WDV image (no firmware needed): SP 0x8FFE, reset 0x400, then
+    // byte stores through RAM A, RAM B and the write-both alias, and a spin.
+    static constexpr uint8_t code[] = {
+        0x13, 0xfc, 0x00, 0xa5, 0x00, 0x06, 0x00, 0x01, // move.b #$a5,$060001
+        0x13, 0xfc, 0x00, 0x5a, 0x00, 0x05, 0x00, 0x03, // move.b #$5a,$050003
+        0x13, 0xfc, 0x00, 0x11, 0x00, 0x04, 0x00, 0x05, // move.b #$11,$040005
+        0x60, 0xfe                                       // bra.s *
+    };
+    juce::MemoryBlock image(0x20 + 0x400 + sizeof(code), true);
+    auto* bytes = static_cast<uint8_t*>(image.getData());
+    bytes[0x20 + 2] = 0x8f;
+    bytes[0x20 + 3] = 0xfe;
+    bytes[0x20 + 6] = 0x04;
+    std::copy(std::begin(code), std::end(code), bytes + 0x20 + 0x400);
+
+    wave::firmware::SharedFirmwareMemory memory;
+    memory.clear();
+    wave::firmware::VoiceFirmwareRuntime runtime;
+    runtime.attachSharedMemory(memory);
+    require(runtime.loadAndReset(image), "Synthetic WDV image was rejected");
+    runtime.runCycles(2000);
+    require(runtime.waveRamByte(0, 1) == 0xa5 && runtime.waveRamByte(1, 1) == 0xa5,
+            "Write at $060001 did not reach both wave RAMs");
+    require(runtime.waveRamByte(1, 3) == 0x5a && runtime.waveRamByte(0, 3) == 0,
+            "Write at $050003 did not reach wave RAM B only");
+    require(runtime.waveRamByte(0, 5) == 0x11 && runtime.waveRamByte(1, 5) == 0,
+            "Write at $040005 did not reach wave RAM A only");
+    require(memory.mainRam[0x60001] == 0 && memory.mainRam[0x50003] == 0
+                && memory.mainRam[0x40005] == 0,
+            "Voice-board wave RAM stores leaked into master DRAM");
+}
+
+void testVoiceBoardRoutingLatchAndBoardLimit()
+{
+    // The one-cold slot strap (WDV 0x466 scan, w2sys 0xB80E mask) names boards
+    // 0-2 only, so the three cards the engine renders are the whole machine.
+    static_assert(wave::firmware::VoiceFirmwareRuntime::maximumBoardCount
+                  == wave::dsp::WaldorfEngine::voiceBoardCount);
+    wave::firmware::VoiceFirmwareRuntime strapProbe;
+    require(strapProbe.setBoardIndex(0) && strapProbe.setBoardIndex(2),
+            "Board slots 0-2 were rejected");
+    require(!strapProbe.setBoardIndex(3) && !strapProbe.setBoardIndex(-1),
+            "A fourth voice board slot was accepted although the strap names only three");
+
+    // Hand-built WDV image: one long store to the write-only routing latch,
+    // as WDV 0xCBA does (MOVE.L d0,$8C0000), then a spin.
+    static constexpr uint8_t code[] = {
+        0x23, 0xfc, 0xdb, 0x6d, 0x8b, 0x6d, 0x00, 0x8c, 0x00, 0x00, // move.l #$db6d8b6d,$8c0000
+        0x60, 0xfe                                                  // bra.s *
+    };
+    juce::MemoryBlock image(0x20 + 0x400 + sizeof(code), true);
+    auto* bytes = static_cast<uint8_t*>(image.getData());
+    bytes[0x20 + 2] = 0x8f;
+    bytes[0x20 + 3] = 0xfe;
+    bytes[0x20 + 6] = 0x04;
+    std::copy(std::begin(code), std::end(code), bytes + 0x20 + 0x400);
+
+    wave::firmware::SharedFirmwareMemory memory;
+    memory.clear();
+    wave::firmware::VoiceFirmwareRuntime runtime;
+    runtime.attachSharedMemory(memory);
+    require(runtime.loadAndReset(image), "Synthetic WDV image was rejected");
+    runtime.runCycles(2000);
+    const auto& writes = runtime.pendingHardwareWrites();
+    constexpr std::array<uint8_t, 4> expected { 0xdb, 0x6d, 0x8b, 0x6d };
+    require(writes.size() == expected.size(),
+            "Routing latch long store was not logged as four byte writes");
+    for (size_t i = 0; i < expected.size(); ++i)
+        require(writes[i].address == wave::firmware::VoiceFirmwareRuntime::routingLatchBase + i
+                    && writes[i].value == expected[i],
+                "Routing latch byte write has the wrong address or value");
+    require(runtime.unmappedReadCount() == 0, "Routing latch store caused an unmapped read");
 }
 
 class Test68000Bus final : public wave::firmware::M68000Bus
@@ -2794,6 +2923,7 @@ int main()
         testCemFilterResponse();
         testMeasuredWaveResonancePassbandLoss();
         testAllVoiceFiltersAreCalibrated();
+        testWvcInputNetworkResponse();
         testCemControlVoltageSettling();
         testLiveCutoffUsesContinuousBaseControlVoltage();
         testAsicHighpassResponse();
@@ -2825,6 +2955,9 @@ int main()
         testLcdFramebuffer();
         testCompletePanelWiringContract();
         testDecodedVoiceBoardProtocol();
+        testVoiceBoardWaveRamDecode();
+        testVoiceBoardRoutingLatchAndBoardLimit();
+        testFirmwareBundleRejectsMissingPath();
         testOfficialFirmwareWhenAvailable();
         std::cout << "WaveCoreTests: all checks passed\n";
         return 0;

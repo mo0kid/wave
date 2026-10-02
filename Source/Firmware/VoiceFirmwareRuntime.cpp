@@ -25,7 +25,8 @@ bool VoiceFirmwareRuntime::loadAndReset(const juce::MemoryBlock& voiceImage)
     if (sharedMemory == &ownedSharedMemory)
         sharedMemory->clear();
     asicRegisters.fill(0);
-    waveformRam.fill(0);
+    for (auto& ram : waveformRam)
+        ram.fill(0);
     for (auto& bank : cvRegisters)
         bank.fill(0);
     controlLatch = 0;
@@ -156,17 +157,18 @@ uint8_t VoiceFirmwareRuntime::read8(uint32_t address) noexcept
 {
     if (address < localRam.size())
         return localRam[address];
-    if (address < sharedMemory->mainRam.size())
-        return sharedMemory->mainRam[address];
+    // The board has only its private 64 KB below the shared SRAM; master DRAM
+    // is on the other bus.
     if (address >= sharedProgramBase && address < sharedProgramBase + sharedMemory->program.size())
         return sharedMemory->program[address - sharedProgramBase];
     if (address >= sharedWorkBase && address < sharedWorkBase + sharedMemory->work.size())
         return sharedMemory->work[address - sharedWorkBase];
-    if (address >= sharedExtensionBase
-        && address < sharedExtensionBase + sharedMemory->extension.size())
-        return sharedMemory->extension[address - sharedExtensionBase];
-    if (address >= waveformRamBase && address < waveformRamBase + waveformRam.size())
-        return waveformRam[address - waveformRamBase];
+    if (address >= waveRamABase && address < waveRamABase + waveRamSize)
+        return waveformRam[0][address - waveRamABase];
+    if (address >= waveRamBBase && address < waveRamBBase + waveRamSize)
+        return waveformRam[1][address - waveRamBBase];
+    if (address >= waveRamBothBase && address < waveRamBothBase + waveRamSize)
+        return waveformRam[0][address - waveRamBothBase];
     if (address == boardControlAddress)
         return boardStatus;
     if (address >= asicBase && address < asicBase + asicRegisters.size())
@@ -188,11 +190,6 @@ void VoiceFirmwareRuntime::write8(uint32_t address, uint8_t value) noexcept
         localRam[address] = value;
         return;
     }
-    if (address < sharedMemory->mainRam.size())
-    {
-        sharedMemory->mainRam[address] = value;
-        return;
-    }
     if (address >= sharedProgramBase && address < sharedProgramBase + sharedMemory->program.size())
     {
         sharedMemory->program[address - sharedProgramBase] = value;
@@ -203,20 +200,22 @@ void VoiceFirmwareRuntime::write8(uint32_t address, uint8_t value) noexcept
         sharedMemory->work[address - sharedWorkBase] = value;
         return;
     }
-    if (address >= sharedExtensionBase
-        && address < sharedExtensionBase + sharedMemory->extension.size())
+    // Wave-RAM stores are not queued: a bank load is up to 32K bytes, which
+    // would crowd the 64K ASIC/CV write queue, and the engine ignores them.
+    if (address >= waveRamABase && address < waveRamABase + waveRamSize)
     {
-        sharedMemory->extension[address - sharedExtensionBase] = value;
+        waveformRam[0][address - waveRamABase] = value;
         return;
     }
-    if (address >= waveformRamBase && address < waveformRamBase + waveformRam.size())
+    if (address >= waveRamBBase && address < waveRamBBase + waveRamSize)
     {
-        waveformRam[address - waveformRamBase] = value;
-        if (hardwareWrites.size() < 65536)
-            hardwareWrites.push_back(
-                { emulatedCycles
-                      + static_cast<uint64_t>(juce::jmax(0, cpu.currentExecutionCycleOffset())),
-                  address, value });
+        waveformRam[1][address - waveRamBBase] = value;
+        return;
+    }
+    if (address >= waveRamBothBase && address < waveRamBothBase + waveRamSize)
+    {
+        waveformRam[0][address - waveRamBothBase] = value;
+        waveformRam[1][address - waveRamBothBase] = value;
         return;
     }
     if (address == boardControlAddress)
@@ -227,30 +226,29 @@ void VoiceFirmwareRuntime::write8(uint32_t address, uint8_t value) noexcept
     if (address >= asicBase && address < asicBase + asicRegisters.size())
     {
         asicRegisters[address - asicBase] = value;
-        if (hardwareWrites.size() < 65536)
-            hardwareWrites.push_back(
-                { emulatedCycles
-                      + static_cast<uint64_t>(juce::jmax(0, cpu.currentExecutionCycleOffset())),
-                  address, value });
+        queueHardwareWrite(address, value);
     }
     if (address >= cvBankABase && address < cvBankABase + cvWindowSize)
     {
         cvRegisters[0][address - cvBankABase] = value;
-        if (hardwareWrites.size() < 65536)
-            hardwareWrites.push_back(
-                { emulatedCycles
-                      + static_cast<uint64_t>(juce::jmax(0, cpu.currentExecutionCycleOffset())),
-                  address, value });
+        queueHardwareWrite(address, value);
     }
     if (address >= cvBankBBase && address < cvBankBBase + cvWindowSize)
     {
         cvRegisters[1][address - cvBankBBase] = value;
-        if (hardwareWrites.size() < 65536)
-            hardwareWrites.push_back(
-                { emulatedCycles
-                      + static_cast<uint64_t>(juce::jmax(0, cpu.currentExecutionCycleOffset())),
-                  address, value });
+        queueHardwareWrite(address, value);
     }
+    if (address >= routingLatchBase && address < routingLatchBase + routingLatchWindowSize)
+        queueHardwareWrite(address, value);
+}
+
+void VoiceFirmwareRuntime::queueHardwareWrite(uint32_t address, uint8_t value) noexcept
+{
+    if (hardwareWrites.size() < 65536)
+        hardwareWrites.push_back(
+            { emulatedCycles
+                  + static_cast<uint64_t>(juce::jmax(0, cpu.currentExecutionCycleOffset())),
+              address, value });
 }
 
 uint32_t VoiceFirmwareRuntime::bigEndian32(const uint8_t* bytes) noexcept

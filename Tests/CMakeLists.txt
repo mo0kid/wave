@@ -75,3 +75,9 @@ if(WAVE_HAS_PRIVATE_ROMS)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         ENVIRONMENT "WAVE_FACTORY_SET=${CMAKE_SOURCE_DIR}/wave.set")
 endif()
+
+# Developer tool: drives the real WDV.SYS from a script and prints the ASIC/CV
+# write stream for the oracle diff (needs no ROMs at build time).
+add_executable(WaveVoiceTrace EXCLUDE_FROM_ALL WaveVoiceTrace.cpp)
+target_include_directories(WaveVoiceTrace PRIVATE ../Source)
+target_link_libraries(WaveVoiceTrace PRIVATE WaveCore)

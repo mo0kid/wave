@@ -22,6 +22,12 @@ class MasterFirmwareRuntime final : private M68000Bus
 public:
     void attachSharedMemory(SharedFirmwareMemory& memory) noexcept { sharedMemory = &memory; }
     bool loadAndStart(const juce::MemoryBlock& masterImage);
+    // Opt-in: OS 1.700's find_free_voice (0x2EAC) returns the quietest voice instead of
+    // letting the steal passes run, so a fresh note steals a held note of its chord
+    // (firmware-map.md section 5). One byte at 0x2EE2 (bcs -> bra) restores OS 1.680's
+    // allocation. Only applied to an image whose surrounding bytes are the 1.700 ones;
+    // returns whether it is applied now (it is re-applied on every loadAndStart).
+    bool setVoiceAllocationFix(bool enabled) noexcept;
     int runCycles(int cycles);
     int runForAudioSamples(int samples, double sampleRate);
     bool runOs1700InitialisationFileLoad();
@@ -166,7 +172,6 @@ public:
     static constexpr uint32_t sharedProgramSize = SharedFirmwareMemory::programSize;
     static constexpr uint32_t sharedWorkBase = 0x140000;
     static constexpr uint32_t sharedWorkSize = SharedFirmwareMemory::workSize;
-    static constexpr uint32_t sharedExtensionBase = 0x180000;
     static constexpr uint32_t lcdVideoBase = 0xa00000;
     static constexpr uint32_t lcdVideoWindowSize = 0x4000;
     using LcdVideoSnapshot = std::array<uint8_t, lcdVideoWindowSize>;
@@ -253,6 +258,7 @@ private:
     int pendingPerformanceRefresh = -1;
     bool voiceLoaderReached = false;
     bool customInitialisationRecords = false;
+    bool voiceAllocationFix = false;
     bool voiceBoardHandoffComplete = false;
     int activeVoiceBoardCount = 0;
     bool coldHardwareSetupComplete = false;

@@ -51,6 +51,79 @@ constexpr auto resetZoomMenuItem = 0x470a;
 constexpr auto toggleKeyboardMenuItem = 0x470b;
 constexpr auto loadPanelSkinMenuItem = 0x470c;
 constexpr auto defaultPanelSkinMenuItem = 0x470d;
+constexpr auto tabbedLayoutMenuItem = 0x470e;
+constexpr auto voiceAllocationFixMenuItem = 0x470f;
+
+// The tabbed layout reuses the original artwork and wiring unchanged: each tab
+// is a list of full-SVG rectangles translated into a smaller view. The screen
+// block keeps the same view position on every tab.
+struct LayoutBlock
+{
+    juce::Rectangle<float> source;
+    juce::Point<float> destination;
+
+    [[nodiscard]] juce::Rectangle<float> destinationBounds() const noexcept
+    {
+        return source.withPosition(destination);
+    }
+};
+
+constexpr auto tabStripHeight = 40.0f;
+constexpr auto tabSectionWidth = 834.0f;
+constexpr auto tabbedViewWidth = tabSectionWidth + 612.0f;
+constexpr auto tabbedViewHeight = tabStripHeight + panelOnlyHeight;
+const std::array<juce::String, 3> tabNames { "OSCILLATOR", "FILTER", "CONTROL" };
+const auto tabHeaderColour = juce::Colour(0xffd1ae88);
+const auto panelDividerColour = juce::Colour(0xff24232d); // screen frame lines
+
+juce::Rectangle<float> tabBounds(int tab) noexcept
+{
+    return { 54.0f + static_cast<float>(tab) * 168.0f, 8.0f, 160.0f, 26.0f };
+}
+
+const std::vector<LayoutBlock>& layoutBlocksFor(bool tabbed, int tab)
+{
+    static const std::vector<LayoutBlock> classic {
+        { { 0.0f, 0.0f, designWidth, designHeight }, {} }
+    };
+    const LayoutBlock screen { { 900.0f, 0.0f, 612.0f, panelOnlyHeight },
+                               { tabSectionWidth, tabStripHeight } };
+    // Transport row sits in the free space above the screen; Rewind's left
+    // edge lines up with the Mute button's.
+    const LayoutBlock transport { { 950.0f, 640.0f, 460.0f, 66.0f },
+                                  { tabSectionWidth + 37.0f, 48.0f } };
+    // System Volume follows the transport row, level with its buttons.
+    const LayoutBlock systemVolume { { 330.0f, 880.0f, 76.0f, 78.0f },
+                                     { tabSectionWidth + 480.0f, 40.0f } };
+    const juce::Point<float> controlOrigin {
+        (tabSectionWidth - 380.0f) * 0.5f,
+        tabStripHeight + (panelOnlyHeight - 300.0f) * 0.5f
+    };
+    static const std::array<std::vector<LayoutBlock>, 3> tabs {
+        std::vector<LayoutBlock> {
+            { { panelHorizontalOffset, 0.0f, tabSectionWidth, panelOnlyHeight },
+              { 0.0f, tabStripHeight } },
+            screen, transport, systemVolume
+        },
+        std::vector<LayoutBlock> {
+            // Right-aligned so its content keeps the Oscillator tab's margin
+            // to the screen.
+            { { 1512.0f, 0.0f, 760.0f, panelOnlyHeight }, { 69.0f, tabStripHeight } },
+            screen, transport, systemVolume
+        },
+        std::vector<LayoutBlock> {
+            // Wheels, Button 1/2, Glide and octave switches.
+            // Stops short of x = 446, where the runtime keybed begins.
+            { { panelHorizontalOffset, 682.0f, 372.0f, 300.0f }, controlOrigin },
+            // Blank panel over System Volume's original spot, which has moved.
+            { { 318.0f, 794.0f, 80.0f, 80.0f },
+              controlOrigin + juce::Point<float> { 328.0f - panelHorizontalOffset,
+                                                   879.0f - 682.0f } },
+            screen, transport, systemVolume
+        }
+    };
+    return tabbed ? tabs[static_cast<size_t>(juce::jlimit(0, 2, tab))] : classic;
+}
 
 bool hitCircle(juce::Point<float> point, float x, float y) noexcept
 {
@@ -477,11 +550,11 @@ public:
                                      static_cast<float>(getHeight())) * 0.68f;
         const auto icon = juce::Rectangle<float> { side, side }
                               .withCentre(getLocalBounds().toFloat().getCentre());
-        auto colour = juce::Colour(0xffdce4ef);
+        auto colour = iconColour;
         if (pressed)
-            colour = juce::Colour(0xff8cb9e8);
+            colour = colour.darker(0.3f);
         else if (highlighted)
-            colour = juce::Colours::white;
+            colour = colour.brighter(0.4f);
 
         juce::Path body;
         body.startNewSubPath(icon.getX(), icon.getY());
@@ -505,6 +578,8 @@ public:
                 .withTrimmedTop(side * 0.57f).withTrimmedBottom(side * 0.12f),
             side * 0.06f, stroke);
     }
+
+    juce::Colour iconColour { 0xffdce4ef };
 };
 
 WaveEmulationAudioProcessorEditor::WaveEmulationAudioProcessorEditor(
@@ -521,13 +596,7 @@ WaveEmulationAudioProcessorEditor::WaveEmulationAudioProcessorEditor(
     systemMenuButton->onClick = [this] { showSystemMenu(); };
     addAndMakeVisible(*systemMenuButton);
     setResizable(true, true);
-    setResizeLimits(
-        juce::roundToInt(designWidth * minimumEditorScale),
-        juce::roundToInt(designHeight * minimumEditorScale),
-        juce::roundToInt(designWidth * maximumEditorScale),
-        juce::roundToInt(designHeight * maximumEditorScale));
-    if (auto* constrainer = getConstrainer())
-        constrainer->setFixedAspectRatio(static_cast<double>(designWidth / designHeight));
+    tabbedLayout = ownerProcessor.getRememberedTabbedLayout();
 
     const auto svg = juce::String::fromUTF8(WaveAssets::WaldorfWaveUI_NOLOGO_svg,
                                             WaveAssets::WaldorfWaveUI_NOLOGO_svgSize);
@@ -710,8 +779,7 @@ WaveEmulationAudioProcessorEditor::WaveEmulationAudioProcessorEditor(
     lcd->setPanelEmbedded(true);
     addAndMakeVisible(*lcd);
 
-    setSize(juce::roundToInt(designWidth * defaultEditorScale),
-            juce::roundToInt(designHeight * defaultEditorScale));
+    setWindowScale(defaultEditorScale);
     startTimerHz(60);
     juce::MessageManager::callAsync([safe = juce::Component::SafePointer(this)] {
         if (safe != nullptr)
@@ -751,6 +819,8 @@ juce::PopupMenu WaveEmulationAudioProcessorEditor::getMenuForIndex(
         return menu;
 
     menu.addItem(loadFirmwareMenuItem, "Load System Firmware Folder...");
+    menu.addItem(voiceAllocationFixMenuItem, "OS 1.700 Voice Allocation Fix (no stolen held notes)", true,
+                 ownerProcessor.getVoiceAllocationFix());
     menu.addSeparator();
     const auto mounted = ownerProcessor.hasMountedDiskImage();
     menu.addItem(createBlankDiskMenuItem, "New Blank 720 KB DD Disk Image...");
@@ -771,7 +841,9 @@ juce::PopupMenu WaveEmulationAudioProcessorEditor::getMenuForIndex(
     menu.addItem(resetZoomMenuItem, "Actual Size (Cmd/Ctrl + 0)");
     menu.addItem(toggleKeyboardMenuItem,
                  keyboardVisible ? "Hide Lower Keyboard Area (Cmd/Ctrl + K)"
-                                 : "Show Lower Keyboard Area (Cmd/Ctrl + K)");
+                                 : "Show Lower Keyboard Area (Cmd/Ctrl + K)",
+                 !tabbedLayout);
+    menu.addItem(tabbedLayoutMenuItem, "Tabbed Layout", true, tabbedLayout);
     menu.addSeparator();
     juce::PopupMenu skins;
     skins.addItem(defaultPanelSkinMenuItem, "Original", true, panelSkinFile == juce::File{});
@@ -807,9 +879,14 @@ void WaveEmulationAudioProcessorEditor::menuItemSelected(int menuItemId, int)
         useDefaultPanelSkin();
         return;
     }
+    if (menuItemId == tabbedLayoutMenuItem)
+    {
+        setTabbedLayout(!tabbedLayout);
+        return;
+    }
     if (menuItemId == zoomInMenuItem || menuItemId == zoomOutMenuItem)
     {
-        const auto currentScale = static_cast<float>(getWidth()) / designWidth;
+        const auto currentScale = viewScale();
         const auto direction = menuItemId == zoomInMenuItem ? 1.0f : -1.0f;
         setWindowScale(std::round(currentScale * 10.0f + direction) / 10.0f);
         return;
@@ -827,6 +904,12 @@ void WaveEmulationAudioProcessorEditor::menuItemSelected(int menuItemId, int)
     if (menuItemId == loadFirmwareMenuItem)
     {
         showFirmwareFolderChooser();
+        return;
+    }
+    if (menuItemId == voiceAllocationFixMenuItem)
+    {
+        ownerProcessor.setVoiceAllocationFix(!ownerProcessor.getVoiceAllocationFix());
+        menuItemsChanged();
         return;
     }
     if (menuItemId == createBlankDiskMenuItem)
@@ -869,15 +952,75 @@ void WaveEmulationAudioProcessorEditor::menuItemSelected(int menuItemId, int)
 void WaveEmulationAudioProcessorEditor::setWindowScale(float scale)
 {
     scale = juce::jlimit(minimumEditorScale, maximumEditorScale, scale);
-    const auto activeHeight = keyboardVisible ? designHeight : panelOnlyHeight;
+    const auto view = viewSize();
     if (auto* constrainer = getConstrainer())
-        constrainer->setFixedAspectRatio(static_cast<double>(designWidth / activeHeight));
-    setResizeLimits(juce::roundToInt(designWidth * minimumEditorScale),
-                    juce::roundToInt(activeHeight * minimumEditorScale),
-                    juce::roundToInt(designWidth * maximumEditorScale),
-                    juce::roundToInt(activeHeight * maximumEditorScale));
-    setSize(juce::roundToInt(designWidth * scale),
-            juce::roundToInt(activeHeight * scale));
+        constrainer->setFixedAspectRatio(static_cast<double>(view.x / view.y));
+    setResizeLimits(juce::roundToInt(view.x * minimumEditorScale),
+                    juce::roundToInt(view.y * minimumEditorScale),
+                    juce::roundToInt(view.x * maximumEditorScale),
+                    juce::roundToInt(view.y * maximumEditorScale));
+    setSize(juce::roundToInt(view.x * scale), juce::roundToInt(view.y * scale));
+}
+
+void WaveEmulationAudioProcessorEditor::setTabbedLayout(bool tabbed, bool remember)
+{
+    if (remember)
+        ownerProcessor.rememberTabbedLayout(tabbed);
+    if (tabbedLayout == tabbed)
+        return;
+    releaseActivePointerInteractions(false);
+    const auto currentScale = viewScale();
+    tabbedLayout = tabbed;
+    setWindowScale(currentScale);
+    menuItemsChanged();
+}
+
+void WaveEmulationAudioProcessorEditor::selectTab(int tab)
+{
+    tab = juce::jlimit(0, static_cast<int>(tabNames.size()) - 1, tab);
+    if (selectedTab == tab)
+        return;
+    releaseActivePointerInteractions(false);
+    selectedTab = tab;
+    layoutComponents();
+    repaint();
+}
+
+float WaveEmulationAudioProcessorEditor::viewScale() const noexcept
+{
+    return static_cast<float>(getWidth()) / viewSize().x;
+}
+
+juce::Point<float> WaveEmulationAudioProcessorEditor::viewSize() const noexcept
+{
+    if (tabbedLayout)
+        return { tabbedViewWidth, tabbedViewHeight };
+    return { designWidth, keyboardVisible ? designHeight : panelOnlyHeight };
+}
+
+juce::Point<float> WaveEmulationAudioProcessorEditor::viewToDesign(
+    juce::Point<float> viewPoint) const noexcept
+{
+    if (getWidth() <= 0)
+        return { -1.0e6f, -1.0e6f };
+    const auto point = viewPoint / viewScale();
+    const auto& blocks = layoutBlocksFor(tabbedLayout, selectedTab);
+    for (auto block = blocks.rbegin(); block != blocks.rend(); ++block)
+        if (block->destinationBounds().contains(point))
+            return block->source.getPosition() + (point - block->destination);
+    // Outside every block: a point far off the artwork that hits no control.
+    return { -1.0e6f, -1.0e6f };
+}
+
+std::optional<juce::Rectangle<int>> WaveEmulationAudioProcessorEditor::designToView(
+    juce::Rectangle<float> designBounds) const noexcept
+{
+    const auto& blocks = layoutBlocksFor(tabbedLayout, selectedTab);
+    for (auto block = blocks.rbegin(); block != blocks.rend(); ++block)
+        if (block->source.contains(designBounds.getCentre()))
+            return ((designBounds + (block->destination - block->source.getPosition()))
+                    * viewScale()).toNearestInt();
+    return std::nullopt;
 }
 
 void WaveEmulationAudioProcessorEditor::setKeyboardVisible(bool visible)
@@ -885,7 +1028,7 @@ void WaveEmulationAudioProcessorEditor::setKeyboardVisible(bool visible)
     if (keyboardVisible == visible)
         return;
     releaseActivePointerInteractions(false);
-    const auto currentScale = static_cast<float>(getWidth()) / designWidth;
+    const auto currentScale = viewScale();
     keyboardVisible = visible;
     setWindowScale(currentScale);
     menuItemsChanged();
@@ -1163,10 +1306,49 @@ void WaveEmulationAudioProcessorEditor::focusLost(FocusChangeType)
 
 void WaveEmulationAudioProcessorEditor::paint(juce::Graphics& graphics)
 {
-    graphics.fillAll(juce::Colours::black);
-    const auto scaleX = static_cast<float>(getWidth()) / designWidth;
+    const auto scale = viewScale();
+    if (!tabbedLayout)
+    {
+        graphics.fillAll(juce::Colours::black);
+        paintDesign(graphics, scale);
+        return;
+    }
+
+    const auto panelColour = juce::Colour(0xff2e2d45);
+    const auto headerColour = tabHeaderColour;
+    graphics.fillAll(panelColour);
+    for (const auto& block : layoutBlocksFor(true, selectedTab))
+    {
+        juce::Graphics::ScopedSaveState saved(graphics);
+        graphics.reduceClipRegion((block.destinationBounds() * scale).toNearestInt());
+        const auto offset = (block.destination - block.source.getPosition()) * scale;
+        graphics.addTransform(juce::AffineTransform::translation(offset.x, offset.y));
+        paintDesign(graphics, scale);
+    }
+
+    // Same colour and 4 px weight as the frame lines rising from the screen.
+    graphics.setColour(panelDividerColour);
+    graphics.fillRect(juce::Rectangle<float> { 0.0f, tabStripHeight, tabbedViewWidth, 4.0f }
+                      * scale);
+
+    graphics.setFont(juce::FontOptions(15.0f * scale, juce::Font::bold | juce::Font::italic));
+    for (auto tab = 0; tab < static_cast<int>(tabNames.size()); ++tab)
+    {
+        const auto bounds = tabBounds(tab) * scale;
+        const auto selected = tab == selectedTab;
+        graphics.setColour(selected ? headerColour : headerColour.withAlpha(0.18f));
+        graphics.fillRoundedRectangle(bounds, 3.0f * scale);
+        graphics.setColour(selected ? panelColour : headerColour);
+        graphics.drawText(tabNames[static_cast<size_t>(tab)], bounds,
+                          juce::Justification::centred);
+    }
+}
+
+void WaveEmulationAudioProcessorEditor::paintDesign(juce::Graphics& graphics, float scale)
+{
+    const auto scaleX = scale;
     const auto fullPanelBounds = juce::Rectangle<float> {
-        0.0f, 0.0f, static_cast<float>(getWidth()), designHeight * scaleX
+        0.0f, 0.0f, designWidth * scaleX, designHeight * scaleX
     };
     if (panelImage.isValid())
     {
@@ -1348,8 +1530,8 @@ void WaveEmulationAudioProcessorEditor::paint(juce::Graphics& graphics)
         constexpr auto rotationExtent = juce::MathConstants<float>::pi * 0.75f;
         for (size_t index = 0; index < knobs.size(); ++index)
         {
-            const auto bounds = knobs[index]->getBounds().toFloat();
-            const auto centre = bounds.getCentre();
+            const auto centre = knobDesignCentres[index].translated(
+                                    panelHorizontalOffset, 0.0f) * scaleX;
             auto* artwork = knobArtwork.get();
             auto artworkSize = 34.0f;
             if (knobArtworkTypes[index] == KnobArtworkType::red)
@@ -1396,10 +1578,14 @@ void WaveEmulationAudioProcessorEditor::paint(juce::Graphics& graphics)
 
 void WaveEmulationAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
 {
-    const auto designPoint = juce::Point<float> {
-        event.position.x * designWidth / static_cast<float>(getWidth()),
-        event.position.y * designWidth / static_cast<float>(getWidth())
-    };
+    if (tabbedLayout)
+        for (auto tab = 0; tab < static_cast<int>(tabNames.size()); ++tab)
+            if ((tabBounds(tab) * viewScale()).contains(event.position))
+            {
+                selectTab(tab);
+                return;
+            }
+    const auto designPoint = viewToDesign(event.position);
     if (const auto midiNote = midiNoteAt(designPoint); midiNote >= 0)
     {
         midiKeyboardDragging = true;
@@ -1418,7 +1604,7 @@ void WaveEmulationAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
         analogDragStartY = event.position.y;
         analogDragStartValue = performanceWheelValues[wheel];
         analogDragRangePixels = performanceWheelSlots[wheel].getHeight()
-                                * static_cast<float>(getWidth()) / designWidth;
+                                * viewScale();
         return;
     }
 
@@ -1461,8 +1647,7 @@ void WaveEmulationAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
                                                   1.0f,
                                                   (region->faderTrackBottom
                                                    - region->faderTrackTop)
-                                                      * static_cast<float>(getWidth())
-                                                      / designWidth)
+                                                      * viewScale())
                                             : 160.0f;
                 if (region->fader)
                 {
@@ -1653,11 +1838,7 @@ void WaveEmulationAudioProcessorEditor::mouseDrag(const juce::MouseEvent& event)
 {
     if (midiKeyboardDragging)
     {
-        const auto designPoint = juce::Point<float> {
-            event.position.x * designWidth / static_cast<float>(getWidth()),
-            event.position.y * designWidth / static_cast<float>(getWidth())
-        };
-        const auto midiNote = midiNoteAt(designPoint);
+        const auto midiNote = midiNoteAt(viewToDesign(event.position));
         if (midiNote != activeMidiNote)
         {
             if (activeMidiNote >= 0)
@@ -2043,27 +2224,33 @@ void WaveEmulationAudioProcessorEditor::timerCallback()
 void WaveEmulationAudioProcessorEditor::resized()
 {
     rebuildPanelImage();
-    const auto scaleX = static_cast<float>(getWidth()) / designWidth;
-    const auto scaleY = scaleX;
-    const auto scaled = [scaleX, scaleY](juce::Rectangle<float> rectangle) {
-        return juce::Rectangle<float>(rectangle.getX() * scaleX, rectangle.getY() * scaleY,
-                                      rectangle.getWidth() * scaleX,
-                                      rectangle.getHeight() * scaleY)
-            .toNearestInt();
+    layoutComponents();
+}
+
+void WaveEmulationAudioProcessorEditor::layoutComponents()
+{
+    const auto place = [this](juce::Component& component, juce::Rectangle<float> designBounds) {
+        const auto bounds = designToView(designBounds);
+        component.setVisible(bounds.has_value());
+        if (bounds.has_value())
+            component.setBounds(*bounds);
     };
 
     if (systemMenuButton != nullptr)
     {
-        // The supplied artwork leaves this narrow chassis rail free of panel
-        // controls. Keeping the host-side menu here makes it available in AU,
-        // VST3, and standalone builds without moving or covering the Wave UI.
-        systemMenuButton->setBounds(scaled({ 16.0f, 4.0f, 36.0f, 28.0f }));
+        // Classic: the narrow chassis rail, free of panel controls. Tabbed:
+        // left of the tab buttons, on every tab.
+        const auto bounds = tabbedLayout
+                                ? juce::Rectangle<float> { 10.0f, 7.0f, 36.0f, 28.0f }
+                                : juce::Rectangle<float> { 16.0f, 4.0f, 36.0f, 28.0f };
+        systemMenuButton->iconColour = tabbedLayout ? tabHeaderColour
+                                                    : juce::Colour(0xffdce4ef);
+        systemMenuButton->setBounds((bounds * viewScale()).toNearestInt());
         systemMenuButton->toFront(false);
     }
 
     if (lcd != nullptr)
-        lcd->setBounds(scaled({ 873.0f + panelHorizontalOffset, 237.0f,
-                                448.0f, 70.0f }));
+        place(*lcd, { 873.0f + panelHorizontalOffset, 237.0f, 448.0f, 70.0f });
 
     if (knobDesignCentres.size() == knobs.size()
         && knobArtworkTypes.size() == knobs.size())
@@ -2072,10 +2259,10 @@ void WaveEmulationAudioProcessorEditor::resized()
         {
             const auto hitSize = knobArtworkTypes[index] == KnobArtworkType::largeRed
                                      ? 104.0f : 60.0f;
-            knobs[index]->setBounds(scaled(
-                juce::Rectangle<float>(hitSize, hitSize)
-                    .withCentre(knobDesignCentres[index].translated(
-                        panelHorizontalOffset, 0.0f))));
+            place(*knobs[index],
+                  juce::Rectangle<float>(hitSize, hitSize)
+                      .withCentre(knobDesignCentres[index].translated(
+                          panelHorizontalOffset, 0.0f)));
         }
     }
 
@@ -2083,9 +2270,9 @@ void WaveEmulationAudioProcessorEditor::resized()
     {
         for (size_t index = 0; index < editButtons.size(); ++index)
         {
-            editButtons[index]->setBounds(scaled(
-                juce::Rectangle<float>(65.0f, 65.0f)
-                    .withCentre(editButtonDesignCentres[index])));
+            place(*editButtons[index],
+                  juce::Rectangle<float>(65.0f, 65.0f)
+                      .withCentre(editButtonDesignCentres[index]));
             // Parameter knobs are constructed later and would otherwise sit
             // above the small overlapping edge of a diagonal Edit switch.
             // Only the exact pill path accepts a click, so its transparent
@@ -2093,7 +2280,6 @@ void WaveEmulationAudioProcessorEditor::resized()
             editButtons[index]->toFront(false);
         }
     }
-
 }
 
 void WaveEmulationAudioProcessorEditor::rebuildPanelImage()
@@ -2108,9 +2294,9 @@ void WaveEmulationAudioProcessorEditor::rebuildPanelImage()
     // at the current editor size avoids retracing thousands of vector paths on
     // every LED, fader, or LCD refresh.
     constexpr auto artworkScale = 2;
-    const auto fullArtworkHeight
-        = juce::roundToInt(designHeight * static_cast<float>(getWidth()) / designWidth);
-    panelImage = juce::Image(juce::Image::RGB, getWidth() * artworkScale,
+    const auto fullArtworkWidth = juce::roundToInt(designWidth * viewScale());
+    const auto fullArtworkHeight = juce::roundToInt(designHeight * viewScale());
+    panelImage = juce::Image(juce::Image::RGB, fullArtworkWidth * artworkScale,
                              fullArtworkHeight * artworkScale, true);
     juce::Graphics imageGraphics(panelImage);
     imageGraphics.fillAll(juce::Colours::black);
@@ -2225,9 +2411,9 @@ juce::String WaveEmulationAudioProcessorEditor::tooltipAt(juce::Point<float> poi
     if (getWidth() <= 0)
         return {};
     for (const auto& knob : knobs)
-        if (knob->getBounds().toFloat().contains(point))
+        if (knob->isVisible() && knob->getBounds().toFloat().contains(point))
             return knob->getTooltip();
-    const auto designPoint = point * (designWidth / static_cast<float>(getWidth()));
+    const auto designPoint = viewToDesign(point);
     for (const auto& region : panelRegions)
         if (region.fader && region.faderIndex >= 0
             && region.path.contains(designPoint.x, designPoint.y))

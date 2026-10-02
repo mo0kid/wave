@@ -797,6 +797,18 @@ juce::Result WaveEmulationAudioProcessor::saveMountedDiskImageAs(
     return mounted;
 }
 
+void WaveEmulationAudioProcessor::setVoiceAllocationFix(bool enabled)
+{
+    const juce::ScopedLock callbackLock(getCallbackLock());
+    masterFirmware.setVoiceAllocationFix(enabled);
+    parameters.state.setProperty("voiceAllocationFix", enabled, nullptr);
+}
+
+bool WaveEmulationAudioProcessor::getVoiceAllocationFix() const
+{
+    return static_cast<bool>(parameters.state.getProperty("voiceAllocationFix", false));
+}
+
 juce::Result WaveEmulationAudioProcessor::ejectDiskImage()
 {
     const auto result = masterFirmware.ejectDiskImage();
@@ -5038,6 +5050,7 @@ void WaveEmulationAudioProcessor::setStateInformation(const void* data, int size
                       : 0;
             currentProgram.store(restoredProgram, std::memory_order_release);
             performanceFadersTouched.store(0, std::memory_order_release);
+            masterFirmware.setVoiceAllocationFix(getVoiceAllocationFix());   // applied by the loadAndStart below
             const auto savedDirectory = parameters.state.getProperty("firmwareDirectory").toString();
             if (savedDirectory.isNotEmpty())
             {
@@ -5880,4 +5893,19 @@ juce::Result WaveEmulationAudioProcessor::rememberPanelSkin(const juce::File& fi
     if (!preference.replaceWithText(file == juce::File{} ? juce::String{} : file.getFullPathName()))
         return juce::Result::fail("Could not save the panel skin preference.");
     return juce::Result::ok();
+}
+
+bool WaveEmulationAudioProcessor::getRememberedTabbedLayout() const
+{
+    return firmwarePreferenceFile.getSiblingFile(
+               firmwarePreferenceFile.getFileNameWithoutExtension() + "-layout.txt")
+               .loadFileAsString().trim() == "tabbed";
+}
+
+void WaveEmulationAudioProcessor::rememberTabbedLayout(bool tabbed)
+{
+    const auto preference = firmwarePreferenceFile.getSiblingFile(
+        firmwarePreferenceFile.getFileNameWithoutExtension() + "-layout.txt");
+    if (preference.getParentDirectory().createDirectory().wasOk())
+        preference.replaceWithText(tabbed ? "tabbed" : "classic");
 }

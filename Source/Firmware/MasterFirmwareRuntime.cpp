@@ -99,6 +99,21 @@ void MasterFirmwareRuntime::Acia6850::pushReceive(uint8_t value) noexcept
     }
 }
 
+bool MasterFirmwareRuntime::setVoiceAllocationFix(bool enabled) noexcept
+{
+    voiceAllocationFix = enabled;
+    // find_free_voice: cmpw 80(a0),d5 (BA68 0050) ; bcs.s +6 (65 06) ; movew 80(a0),d5 ; movew d7,d4
+    constexpr uint32_t branch = 0x2ee2u;
+    constexpr uint8_t prefix[] = { 0xba, 0x68, 0x00, 0x50 };
+    auto& ram = sharedMemory->mainRam;
+    const auto isOs1700 = std::equal(std::begin(prefix), std::end(prefix), ram.begin() + (branch - 4u))
+                          && ram[branch + 1u] == 0x06 && (ram[branch] == 0x65 || ram[branch] == 0x60);
+    if (!isOs1700)
+        return false;
+    ram[branch] = enabled ? 0x60 : 0x65;
+    return enabled;
+}
+
 bool MasterFirmwareRuntime::loadAndStart(const juce::MemoryBlock& masterImage)
 {
     loaded = false;
@@ -160,6 +175,7 @@ bool MasterFirmwareRuntime::loadAndStart(const juce::MemoryBlock& masterImage)
         return false;
 
     std::copy_n(bytes, masterImage.getSize(), sharedMemory->mainRam.begin() + imageBase);
+    setVoiceAllocationFix(voiceAllocationFix);
 
     // INIT.PFM and INIT.SND are normally separate files on the Wave system
     // disk. OS 1.700 also contains genuine safe fallback records, used after
@@ -1139,9 +1155,6 @@ uint8_t MasterFirmwareRuntime::read8(uint32_t address) noexcept
         return sharedMemory->program[address - sharedProgramBase];
     if (address >= sharedWorkBase && address < sharedWorkBase + sharedMemory->work.size())
         return sharedMemory->work[address - sharedWorkBase];
-    if (address >= sharedExtensionBase
-        && address < sharedExtensionBase + sharedMemory->extension.size())
-        return sharedMemory->extension[address - sharedExtensionBase];
     if (address >= lcdVideoBase && address < lcdVideoBase + lcdVideoRam.size())
         return lcdVideoRam[address - lcdVideoBase].load(std::memory_order_relaxed);
 
@@ -1223,12 +1236,6 @@ void MasterFirmwareRuntime::write8(uint32_t address, uint8_t value) noexcept
     if (address >= sharedWorkBase && address < sharedWorkBase + sharedMemory->work.size())
     {
         sharedMemory->work[address - sharedWorkBase] = value;
-        return;
-    }
-    if (address >= sharedExtensionBase
-        && address < sharedExtensionBase + sharedMemory->extension.size())
-    {
-        sharedMemory->extension[address - sharedExtensionBase] = value;
         return;
     }
     if (address >= lcdVideoBase && address < lcdVideoBase + lcdVideoRam.size())

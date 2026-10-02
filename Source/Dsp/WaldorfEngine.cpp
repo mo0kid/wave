@@ -3,22 +3,33 @@
 #include <juce_dsp/juce_dsp.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace wave::dsp
 {
 namespace
 {
 // WDV OS 1.700 stores modulation amounts in a 128-word table at 0x25e8.
-// Apart from the saturated -64 endpoint, its exact relationship is
-// sign(amount) * amount^2 / 4096. The pitch routine applies that curve twice,
-// then both oscillator callers at $0e34/$0eea arithmetic-shift its result
-// right by three before adding it to the pitch accumulator.
+// Apart from the saturated -64 endpoint and three typos, its relationship is
+// sign(amount) * amount^2 / 4096 (8 * n^2 of 32768). The typos are index 6
+// (amount -58: -29912 instead of -26912), index 126 (+62: 31000 instead of
+// 30752) and index 127 (+63: 32767 instead of 31752). The pitch routine
+// applies the result squared, then both oscillator callers at $0e14/$0eca
+// arithmetic-shift it right by three before adding it to the pitch
+// accumulator.
 float wdvAmountDepth(float amount) noexcept
 {
     const auto limited = juce::jlimit(-64.0f, 63.0f, amount);
-    return std::copysign(limited * limited / 4096.0f, limited);
+    static constexpr std::array<std::pair<float, float>, 3> tableTypos {{
+        { -58.0f, -3000.0f }, { 62.0f, 248.0f }, { 63.0f, 1015.0f }
+    }};
+    auto depth = std::copysign(limited * limited / 4096.0f, limited);
+    for (const auto& [index, error] : tableTypos)
+        depth += error / 32768.0f * juce::jmax(0.0f, 1.0f - std::abs(limited - index));
+    return depth;
 }
 
 float wdvPitchDepthSemitones(float amount) noexcept
@@ -1078,10 +1089,15 @@ Cem3387::StereoSample WaldorfEngine::Voice::process(
     }
 
     reconstruction.setAge(parameters.circuitAgeAmount);
-    const auto levelCode1 = static_cast<uint8_t>(juce::jlimit(
+    auto levelCode1 = static_cast<uint8_t>(juce::jlimit(
         0, 127, juce::roundToInt(controlWaveLevels[0] * 112.0f)));
-    const auto levelCode2 = static_cast<uint8_t>(juce::jlimit(
+    auto levelCode2 = static_cast<uint8_t>(juce::jlimit(
         0, 127, juce::roundToInt(controlWaveLevels[1] * 112.0f)));
+    if (quantiseWaveLevels)
+    {
+        levelCode1 = AsicOutputMixer::levelFromRegisterBits(levelCode1);
+        levelCode2 = AsicOutputMixer::levelFromRegisterBits(levelCode2);
+    }
     asicClockPhase += OscillatorChipProxy::modelClockRate() / sampleRate;
     while (asicClockPhase >= 1.0)
     {
