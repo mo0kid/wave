@@ -74,6 +74,28 @@ int main()
         require(panelEditor->tooltipAt({ 10.0f, 600.0f }).isEmpty(),
                 "Empty panel space should not have a control tooltip");
 
+        // Tabbed layout: sections are translated beside a fixed screen block.
+        panelEditor->setTabbedLayout(true, false);
+        require(editor->getWidth() == 1446 && editor->getHeight() == 659,
+                "Unexpected tabbed editor size");
+        snapshot(*editor, "editor-tab-oscillator");
+        require(panelEditor->tooltipAt({ 156.0f, 121.0f }).contains("Wave 1 Detune"),
+                "Oscillator tab knob is not mapped");
+        require(panelEditor->tooltipAt({ 969.0f - 66.0f, 440.0f }).startsWith("Fader "),
+                "Screen faders are not mapped");
+        panelEditor->selectTab(1);
+        snapshot(*editor, "editor-tab-filter");
+        require(panelEditor->tooltipAt({ 227.0f, 277.0f }).contains("Cutoff"),
+                "Filter tab knob is not mapped");
+        require(panelEditor->tooltipAt({ 156.0f, 121.0f }).isEmpty(),
+                "Hidden oscillator knob still answers on the filter tab");
+        panelEditor->selectTab(2);
+        snapshot(*editor, "editor-tab-control");
+        panelEditor->selectTab(0);
+        panelEditor->setTabbedLayout(false, false);
+        require(editor->getWidth() == 2338 && editor->getHeight() == 1042,
+                "Classic layout did not restore its size");
+
         // A synthetic skin verifies visible replacement and fixed hit geometry.
         juce::TemporaryFile skin(".svg");
         require(skin.getFile().replaceWithText(

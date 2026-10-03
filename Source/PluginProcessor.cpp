@@ -6120,3 +6120,18 @@ juce::Result WaveEmulationAudioProcessor::rememberPanelSkin(const juce::File& fi
         return juce::Result::fail("Could not save the panel skin preference.");
     return juce::Result::ok();
 }
+
+bool WaveEmulationAudioProcessor::getRememberedTabbedLayout() const
+{
+    return firmwarePreferenceFile.getSiblingFile(
+               firmwarePreferenceFile.getFileNameWithoutExtension() + "-layout.txt")
+               .loadFileAsString().trim() == "tabbed";
+}
+
+void WaveEmulationAudioProcessor::rememberTabbedLayout(bool tabbed)
+{
+    const auto preference = firmwarePreferenceFile.getSiblingFile(
+        firmwarePreferenceFile.getFileNameWithoutExtension() + "-layout.txt");
+    if (preference.getParentDirectory().createDirectory().wasOk())
+        preference.replaceWithText(tabbed ? "tabbed" : "classic");
+}
